@@ -1,34 +1,70 @@
-# TOKEN = "1884569938:AAFL9zZiYJYXXZAlyTPLKFnUHVlf9wg6nCk"
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+import sqlite3
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 
-# CONFIGURACIÓN
-TOKEN = "1884569938:AAFL9zZiYJYXXZAlyTPLKFnUHVlf9wg6nCk"
-ADMIN_ID = 123456789 
+# --- CONFIGURACIÓN ---
+# RECOMENDACIÓN: Genera un nuevo token en @BotFather, el anterior quedó expuesto.
+TOKEN = "TU_NUEVO_TOKEN_AQUI"
+ADMIN_ID = 123456789  # Reemplaza con tu ID real de Telegram
 
-# --- CONSTRUCTORES DE TECLADOS (REPLY KEYBOARD) ---
+# --- GESTIÓN DE BASE DE DATOS (SQLite) ---
+
+def init_db():
+    conn = sqlite3.connect('bot_data.db')
+    cursor = conn.cursor()
+    # Creamos la tabla si no existe
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS usuarios (
+            user_id INTEGER PRIMARY KEY,
+            saldo REAL DEFAULT 0.0
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def get_saldo(user_id):
+    conn = sqlite3.connect('bot_data.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT saldo FROM usuarios WHERE user_id = ?', (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else 0.0
+
+def update_saldo(user_id, cantidad):
+    """Suma o resta cantidad al saldo actual"""
+    conn = sqlite3.connect('bot_data.db')
+    cursor = conn.cursor()
+    # Insertamos si no existe, si existe sumamos al saldo
+    cursor.execute('''
+        INSERT INTO usuarios (user_id, saldo) VALUES (?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET saldo = saldo + ?
+    ''', (user_id, cantidad, cantidad))
+    conn.commit()
+    conn.close()
+
+# --- CONSTRUCTORES DE TECLADOS ---
 
 def get_client_keyboard():
-    # Cada lista interna es una fila de botones
     keyboard = [
         ["📦 Ver disponibilidad", "💰 Comprar plan"],
         ["📋 Mis Planes", "💰 Mi Balance", "Admin"],
         ["❓ Ayuda"]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 def get_plans_keyboard():
-    # Cada lista interna es una fila de botones
     keyboard = [
-        ["10 USD", "20 USD","50 USD"],
+        ["10 USD", "20 USD", "50 USD"],
         ["100 USD"],
         ["🔙 Volver"]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 def get_admin_keyboard():
     keyboard = [
-        ["📦 Ver disponibilidad", "💰 Comprar plan","📋 Todos los Planes"],
+        ["📦 Ver disponibilidad", "💰 Comprar plan", "📋 Todos los Planes"],
         ["📊 Repartir Pago", "📋 Órdenes Pendientes", "📉 Descontar Retiro"],
-        ["💰 Balance General","➕ Agregar Saldo", "🔄 Reiniciar Stock"],
+        ["💰 Balance General", "➕ Agregar Saldo", "🔄 Reiniciar Stock"],
         ["❓ Ayuda"],
         ["🔙 Salir del Panel Admin"]
     ]
@@ -37,7 +73,12 @@ def get_admin_keyboard():
 # --- MANEJADORES DE COMANDOS ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = "📊 *BOT DE INVERSIONES*\n\n*SU BALANCE PERSONAL:*\n💰 Disponible para retirar: 0 USD"
+    user_id = update.effective_user.id
+    # Aseguramos que el usuario esté en la DB al iniciar
+    update_saldo(user_id, 0) 
+    
+    saldo = get_saldo(user_id)
+    text = f"📊 *BOT DE INVERSIONES*\n\n*SU BALANCE PERSONAL:*\n💰 Disponible: {saldo} USD"
     await update.message.reply_text(
         text, 
         parse_mode="Markdown", 
@@ -49,65 +90,83 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ No tienes autorización.")
         return
     
-    text = "🔐 *PANEL DE CONTROL*\n\n*BALANCE GENERAL:* 0 USD"
+    text = "🔐 *PANEL DE CONTROL ADMIN*"
     await update.message.reply_text(
         text, 
         parse_mode="Markdown", 
         reply_markup=get_admin_keyboard()
     )
 
-# --- MANEJADOR DE TEXTO (PARA LOS BOTONES) ---
+# Comando extra para que tú como admin puedas dar saldo a alguien
+# Uso: /recargar ID_DEL_USUARIO CANTIDAD
+async def recargar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    try:
+        user_target = int(context.args[0])
+        monto = float(context.args[1])
+        update_saldo(user_target, monto)
+        await update.message.reply_text(f"✅ Se han añadido {monto} USD al usuario {user_target}.")
+    except:
+        await update.message.reply_text("Uso: `/recargar ID monto`", parse_mode="Markdown")
+
+# --- MANEJADOR DE TEXTO ---
 
 async def handle_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
 
-    # Lógica para volver al menú de cliente desde el de admin
-    if text == "🔙 Salir del Panel Admin":
-        await update.message.reply_text("Volviendo al menú de cliente...", reply_markup=get_client_keyboard())
+    # Lógica de navegación
+    if text == "🔙 Salir del Panel Admin" or text == "🔙 Volver":
+        await update.message.reply_text("Volviendo al menú...", reply_markup=get_client_keyboard())
         return
 
-    # Debug de acciones
-    if user_id == ADMIN_ID:
-        # Aquí puedes poner lógica específica para el admin comparando el texto
-        if text == "📋 Órdenes Pendientes":
-            await update.message.reply_text("DEBUG ADMIN: Mostrando órdenes... [RET-001, RET-002]")
-        elif text == "📊 Repartir Pago":
-            await update.message.reply_text("DEBUG ADMIN: Monto a repartir hoy:")
+    if text == "Admin":
+        if user_id == ADMIN_ID:
+            await admin_panel(update, context)
         else:
-            await update.message.reply_text(f"DEBUG ADMIN: Ejecutando '{text}'")
-    else:
-        # Lógica para clientes
-        if text == "💰 Mi Balance":
-            await update.message.reply_text("💰 *SU BALANCE*\n\nDisponible: 47.85 USD\n\n(Escribe 'Retirar' para continuar)")
-        if text == "Admin":
-            await update.message.reply_text(
-        text, 
-        parse_mode="Markdown", 
-        reply_markup=get_admin_keyboard()  
-    )
-        if text == "💰 Comprar plan":
-            await update.message.reply_text(
-        text, 
-        parse_mode="Markdown", 
-        reply_markup=get_plans_keyboard()
-    )
-        if text == "🔙 Volver":
-            await update.message.reply_text("Volviendo al menú principal...", reply_markup=get_client_keyboard())
-     
+            await update.message.reply_text("❌ Acceso denegado.")
+        return
+
+    # Lógica de Balance Virtual
+    if text == "💰 Mi Balance":
+        saldo = get_saldo(user_id)
+        await update.message.reply_text(
+            f"💰 *SU BALANCE*\n\nDisponible: {saldo} USD\n\n(Escribe 'Retirar' para continuar)", 
+            parse_mode="Markdown"
+        )
+        return
+
+    if text == "💰 Comprar plan":
+        await update.message.reply_text("Seleccione un monto:", reply_markup=get_plans_keyboard())
+        return
+
+    # Lógica de Compra (Ejemplo para el botón de 10 USD)
+    if text == "10 USD":
+        saldo_actual = get_saldo(user_id)
+        if saldo_actual >= 10:
+            update_saldo(user_id, -10)
+            nuevo_saldo = get_saldo(user_id)
+            await update.message.reply_text(f"✅ Compra exitosa. Nuevo saldo: {nuevo_saldo} USD", reply_markup=get_client_keyboard())
         else:
-            await update.message.reply_text(f"DEBUG CLIENTE: Has pulsado '{text}'")
+            await update.message.reply_text("❌ Saldo insuficiente para este plan.")
+        return
+
+    # Respuesta por defecto para otros botones
+    await update.message.reply_text(f"Has seleccionado: {text}")
 
 # --- EJECUCIÓN ---
 
-app = ApplicationBuilder().token(TOKEN).build()
+if __name__ == '__main__':
+    # Inicializar base de datos
+    init_db()
+    
+    app = ApplicationBuilder().token(TOKEN).build()
 
-# Comandos
-app.add_handler(CommandHandler(["start", "menu"], start))
-app.add_handler(CommandHandler("admin", admin_panel))
+    # Handlers
+    app.add_handler(CommandHandler(["start", "menu"], start))
+    app.add_handler(CommandHandler("admin", admin_panel))
+    app.add_handler(CommandHandler("recargar", recargar))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
 
-# Manejador para los clics en los botones de la barra (que llegan como texto)
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_messages))
-
-print("Bot con menú inferior activo...")
-app.run_polling()
+    print("Bot con SQLite activo...")
+    app.run_polling()
