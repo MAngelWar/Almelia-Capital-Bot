@@ -5,7 +5,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, Messa
 # --- CONFIGURACIÓN ---
 # RECOMENDACIÓN: Genera un nuevo token en @BotFather, el anterior quedó expuesto.
 TOKEN = "1884569938:AAFL9zZiYJYXXZAlyTPLKFnUHVlf9wg6nCk"
-ADMIN_ID = 123456789  # Reemplaza con tu ID real de Telegram
+ADMIN_ID = 1166687657  # Reemplaza con tu ID real de Telegram
 
 # --- GESTIÓN DE BASE DE DATOS (SQLite) ---
 
